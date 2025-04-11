@@ -1,96 +1,122 @@
+import sys
 import numpy as np
 import trimesh
 from scipy.spatial.transform import Rotation as R
+from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from PyQt5 import QtWidgets, QtCore
-import sys
 from imu_device import UARTIMUDevice
 
-# Load and prepare STL
+# Load and scale mesh
 mesh = trimesh.load('C:/Users/monke/Documents/GitHub/hello_world/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
-
-print("Original size (x, y, z):", mesh.extents)
-
-current_length = mesh.extents[0]  # Assuming X is length
-desired_length = 0.81
-scale_factor = desired_length / current_length
-print(f"Scale factor = {scale_factor}")
-
-mesh.apply_scale(scale_factor)
-print("After scaling (x, y, z):", mesh.extents)
-
-# Center the mesh for clean rotation
+mesh.apply_scale(0.81 / mesh.extents[0])
 mesh.vertices -= mesh.centroid
 vertices = mesh.vertices.copy()
 faces = mesh.faces
-
-# Build mesh data for pyqtgraph
 mesh_data = gl.MeshData(vertexes=vertices, faces=faces)
 
-# Create Qt App
-app = QtWidgets.QApplication(sys.argv)
-view = gl.GLViewWidget()
-view.setWindowTitle('Real-time IMU STL Viewer')
-view.setGeometry(100, 100, 800, 600)
-view.show()
+# Main application window
+class IMUMeshViewer(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("IMU Mesh + Live Plot")
+        self.resize(1400, 800)
 
-# Add grid
-grid = gl.GLGridItem()
-grid.setSize(x=2, y=2)
-grid.setSpacing(0.1, 0.1)
-view.addItem(grid)
+        # Layouts
+        main_layout = QtWidgets.QHBoxLayout(self)
+        left_layout = QtWidgets.QVBoxLayout()
+        right_layout = QtWidgets.QVBoxLayout()
+        main_layout.addLayout(left_layout, 2)
+        main_layout.addLayout(right_layout, 1)
 
-# Add mesh to scene
-mesh_item = gl.GLMeshItem(meshdata=mesh_data, smooth=False, drawFaces=True, drawEdges=True, edgeColor=(0, 0, 0, 1), color=(0.6, 0.8, 1, 1))
-mesh_item.setGLOptions('opaque')
-view.addItem(mesh_item)
+        # 3D View
+        self.view = gl.GLViewWidget()
+        self.view.setWindowTitle('3D IMU Mesh View')
+        self.view.addItem(gl.GLGridItem())
+        self.mesh_item = gl.GLMeshItem(meshdata=mesh_data, smooth=False, drawFaces=True, drawEdges=True, edgeColor=(0, 0, 0, 1), color=(0.6, 0.8, 1, 1))
+        self.mesh_item.setGLOptions('opaque')
+        self.view.addItem(self.mesh_item)
+        left_layout.addWidget(self.view)
 
-# Setup IMU device
-device = UARTIMUDevice(port='COM7', baudrate=115200)
+        # Quaternion plot
+        self.quat_plot = pg.PlotWidget(title="Quaternion (w, x, y, z)")
+        self.quat_plot.addLegend()
+        self.quat_plot.setYRange(-1.2, 1.2)
+        self.quat_curves = [self.quat_plot.plot(pen=pg.mkPen(c, width=2), name=label)
+                            for c, label in zip(['w', 'r', 'g', 'b'], ['w', 'x', 'y', 'z'])]
+        right_layout.addWidget(self.quat_plot)
 
-# Integration state
-prev_time = None
-velocity = np.zeros(3)
-position = np.zeros(3)
+        # Acceleration plot
+        self.accel_plot = pg.PlotWidget(title="Linear Acceleration (x, y, z)")
+        self.accel_plot.addLegend()
+        self.accel_plot.setYRange(-20, 20)
+        self.accel_curves = [self.accel_plot.plot(pen=pg.mkPen(c, width=2), name=label)
+                             for c, label in zip(['r', 'g', 'b'], ['x', 'y', 'z'])]
+        right_layout.addWidget(self.accel_plot)
 
-def update():
-    global prev_time, velocity, position
+        # IMU Device
+        self.device = UARTIMUDevice(port='COM7', baudrate=115200)
 
-    result = device.sample()
-    if result is None:
-        return
+        # State
+        self.prev_time = None
+        self.velocity = np.zeros(3)
+        self.position = np.zeros(3)
+        self.timestamps = []
+        self.quat_data = [[] for _ in range(4)]
+        self.accel_data = [[] for _ in range(3)]
+        self.max_points = 300
 
-    timestamp, accel_world, quat = result
+        # Timer
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_data)
+        self.timer.start(33)
 
-    if prev_time is None:
-        prev_time = timestamp
-        return
+    def update_data(self):
+        result = self.device.sample()
+        if result is None:
+            return
 
-    dt = timestamp - prev_time
-    prev_time = timestamp
+        timestamp, accel_world, quat = result
 
-    # Integrate acceleration -> velocity
-    velocity += accel_world * dt
+        if self.prev_time is None:
+            self.prev_time = timestamp
+            return
 
-    # Integrate velocity -> position
-    position += velocity * dt
+        dt = timestamp - self.prev_time
+        self.prev_time = timestamp
 
-    # Convert quaternion to rotation matrix
-    rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
-    rotated_vertices = (rot @ vertices.T).T
+        # Integrate acceleration -> velocity -> position
+        self.velocity += accel_world * dt
+        self.position += self.velocity * dt
 
-    # Apply only rotation to mesh
-    mesh_data.setVertexes(rotated_vertices)
-    mesh_item.meshDataChanged()
+        # Rotate mesh
+        rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
+        transformed_vertices = (rot @ vertices.T).T + self.position  # <-- apply translation here
+        mesh_data.setVertexes(transformed_vertices)
+        self.mesh_item.meshDataChanged()
 
-    # Center the camera on the current position
-    view.opts['center'] = pg.Vector(position[0], position[1], position[2])
-    
-# Timer to refresh
-timer = QtCore.QTimer()
-timer.timeout.connect(update)
-timer.start(10)
+        # Update plots
+        self.timestamps.append(timestamp)
+        for i in range(4):
+            self.quat_data[i].append(quat[i])
+        for i in range(3):
+            self.accel_data[i].append(accel_world[i])
 
-# Run the app
-sys.exit(app.exec_())
+        if len(self.timestamps) > self.max_points:
+            self.timestamps = self.timestamps[-self.max_points:]
+            for i in range(4):
+                self.quat_data[i] = self.quat_data[i][-self.max_points:]
+            for i in range(3):
+                self.accel_data[i] = self.accel_data[i][-self.max_points:]
+
+        for i in range(4):
+            self.quat_curves[i].setData(self.timestamps, self.quat_data[i])
+        for i in range(3):
+            self.accel_curves[i].setData(self.timestamps, self.accel_data[i])
+
+
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    window = IMUMeshViewer()
+    window.show()
+    sys.exit(app.exec_())
