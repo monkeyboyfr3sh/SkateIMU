@@ -1,58 +1,61 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import trimesh
 from scipy.spatial.transform import Rotation as R
+import pyqtgraph as pg
+import pyqtgraph.opengl as gl
+from PyQt5 import QtWidgets, QtCore
+import sys
+from imu_device import UARTIMUDevice
 
-# === Geometry ===
-cube_verts = np.array([
-    [-1, -1, -1], [+1, -1, -1], [+1, +1, -1], [-1, +1, -1],
-    [-1, -1, +1], [+1, -1, +1], [+1, +1, +1], [-1, +1, +1]
-]) * 0.5
+# Load and prepare STL
+mesh = trimesh.load('C:/Users/monke/Documents/GitHub/hello_world/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
+mesh.apply_scale(0.01)
+mesh.vertices -= mesh.centroid
+vertices = mesh.vertices
+faces = mesh.faces
 
-cube_edges = [
-    (0, 1), (1, 2), (2, 3), (3, 0),
-    (4, 5), (5, 6), (6, 7), (7, 4),
-    (0, 4), (1, 5), (2, 6), (3, 7)
-]
+# Build mesh data for pyqtgraph
+mesh_data = gl.MeshData(vertexes=vertices, faces=faces)
 
-from imu_device import UARTIMUDevice  # if saved separately
+# Create Qt App
+app = QtWidgets.QApplication(sys.argv)
+view = gl.GLViewWidget()
+view.setWindowTitle('Real-time IMU STL Viewer')
+view.setGeometry(100, 100, 800, 600)
+view.show()
 
+# Add grid
+grid = gl.GLGridItem()
+grid.setSize(x=2, y=2)
+grid.setSpacing(0.1, 0.1)
+view.addItem(grid)
+
+# Add mesh to scene
+mesh_item = gl.GLMeshItem(meshdata=mesh_data, smooth=False, drawFaces=True, drawEdges=True, edgeColor=(0, 0, 0, 1), color=(0.6, 0.8, 1, 1))
+mesh_item.setGLOptions('opaque')
+view.addItem(mesh_item)
+
+# Setup IMU device
 device = UARTIMUDevice(port='COM7', baudrate=115200)
 
-plt.ion()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
+def update():
+    quat = device.sample()
 
-try:
-    while True:
-        quat = device.sample()
-        if quat is None:
-            continue
+    if quat is None:
+        return
 
-        rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]])  # x, y, z, w
-        rotated = rot.apply(cube_verts)
+    # Convert to rotation matrix (order: [x, y, z, w])
+    rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
 
-        ax.cla()
-        ax.set_xlim([-1, 1])
-        ax.set_ylim([-1, 1])
-        ax.set_zlim([-1, 1])
-        ax.set_title("ESP32 IMU Orientation")
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
+    # Apply rotation
+    rotated = (rot @ vertices.T).T
+    mesh_data.setVertexes(rotated)
+    mesh_item.meshDataChanged()
 
-        for start, end in cube_edges:
-            ax.plot(
-                [rotated[start][0], rotated[end][0]],
-                [rotated[start][1], rotated[end][1]],
-                [rotated[start][2], rotated[end][2]],
-                color='blue'
-            )
+# Timer to refresh every 50ms
+timer = QtCore.QTimer()
+timer.timeout.connect(update)
+timer.start(10)
 
-        plt.pause(0.01)
-
-except KeyboardInterrupt:
-    print("Stopped.")
-
-finally:
-    device.close()
+# Run the app
+sys.exit(app.exec_())
