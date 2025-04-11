@@ -54,14 +54,30 @@ class IMUMeshViewer(QtWidgets.QWidget):
                              for c, label in zip(['r', 'g', 'b'], ['x', 'y', 'z'])]
         right_layout.addWidget(self.accel_plot)
 
+        # Velocity plot
+        self.velocity_plot = pg.PlotWidget(title="Velocity (x, y, z)")
+        self.velocity_plot.addLegend()
+        self.velocity_plot.setYRange(-5, 5)
+        self.velocity_curves = [self.velocity_plot.plot(pen=pg.mkPen(c, width=2), name=label)
+                                for c, label in zip(['r', 'g', 'b'], ['vx', 'vy', 'vz'])]
+        right_layout.addWidget(self.velocity_plot)
+
+        # Position plot
+        self.position_plot = pg.PlotWidget(title="Position (x, y, z)")
+        self.position_plot.addLegend()
+        self.position_plot.setYRange(-5, 5)
+        self.position_curves = [self.position_plot.plot(pen=pg.mkPen(c, width=2), name=label)
+                                for c, label in zip(['r', 'g', 'b'], ['px', 'py', 'pz'])]
+        right_layout.addWidget(self.position_plot)
+
         # IMU Device
         self.device = UARTIMUDevice(port='COM7', baudrate=115200)
 
         # Configurable deadband
-        self.accel_deadband = 2.0  # changeable threshold
+        self.accel_deadband = 0.6  # changeable threshold
         
         # Velocity decay factor (closer to 1 = slower decay, e.g. 0.98)
-        self.velocity_decay = 0.98
+        self.velocity_decay = 0.60
 
         # State
         self.prev_time = None
@@ -70,12 +86,14 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.timestamps = []
         self.quat_data = [[] for _ in range(4)]
         self.accel_data = [[] for _ in range(3)]
+        self.velocity_data = [[] for _ in range(3)]
+        self.position_data = [[] for _ in range(3)]
         self.max_points = 300
 
         # Timer
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_data)
-        self.timer.start(33)
+        self.timer.start(25)
 
     def apply_deadband(self, accel):
         filtered = np.where(np.abs(accel) < self.accel_deadband, 0, accel)
@@ -117,6 +135,8 @@ class IMUMeshViewer(QtWidgets.QWidget):
             self.quat_data[i].append(quat[i])
         for i in range(3):
             self.accel_data[i].append(accel_world[i])
+            self.velocity_data[i].append(self.velocity[i])
+            self.position_data[i].append(self.position[i])
 
         if len(self.timestamps) > self.max_points:
             self.timestamps = self.timestamps[-self.max_points:]
@@ -125,10 +145,17 @@ class IMUMeshViewer(QtWidgets.QWidget):
             for i in range(3):
                 self.accel_data[i] = self.accel_data[i][-self.max_points:]
 
+            for i in range(3):
+                self.velocity_data[i] = self.velocity_data[i][-self.max_points:]
+                self.position_data[i] = self.position_data[i][-self.max_points:]
+
         for i in range(4):
             self.quat_curves[i].setData(self.timestamps, self.quat_data[i])
         for i in range(3):
             self.accel_curves[i].setData(self.timestamps, self.accel_data[i])
+        for i in range(3):
+            self.velocity_curves[i].setData(self.timestamps, self.velocity_data[i])
+            self.position_curves[i].setData(self.timestamps, self.position_data[i])
 
 
 if __name__ == '__main__':
