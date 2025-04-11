@@ -181,12 +181,12 @@ esp_err_t bno055_begin_i2c(bno055_opmode_t mode)
     }
 
     /** Set the timeout for the communication bus (clock stretching) **/
-    err = i2c_set_timeout((i2c_port_t)I2C_NUM_0, (int)INITIAL_MASTER_TOUT);
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-    ESP_LOGD(TAG, "This is the timeout value: %d", INITIAL_MASTER_TOUT);
+    // err = i2c_set_timeout((i2c_port_t)I2C_NUM_0, (int)INITIAL_MASTER_TOUT);
+    // if (err != ESP_OK)
+    // {
+    //     return err;
+    // }
+    // ESP_LOGD(TAG, "This is the timeout value: %d", INITIAL_MASTER_TOUT);
 
     /** Verify that we have the correct device **/
     uint8_t bno055_id = read8(BNO055_CHIP_ID_ADDR);

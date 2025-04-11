@@ -61,10 +61,10 @@ static void get_vector_callback(void *arg)
         // print_vector(VECTOR_EULER, vec);
         // get_vector(VECTOR_GYROSCOPE, vec);
         // print_vector(VECTOR_GYROSCOPE, vec);
-        // get_vector(VECTOR_LINEARACCEL, vec);
-        // print_vector(VECTOR_LINEARACCEL, vec);
-        get_vector(VECTOR_ACCELEROMETER, vec);
-        print_vector(VECTOR_ACCELEROMETER, vec);
+        get_vector(VECTOR_LINEARACCEL, vec);
+        print_vector(VECTOR_LINEARACCEL, vec);
+        // get_vector(VECTOR_ACCELEROMETER, vec);
+        // print_vector(VECTOR_ACCELEROMETER, vec);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
@@ -94,25 +94,26 @@ void app_main(void)
     if (err != ESP_OK)
     {
         printf("ERROR: could not initiate 12c comunication\n");
+        return;
     }
 
     //calibrate_sensor(true);
 
-    /** Calibrate sensor or use calibration profile **/
-    err = calibrate_sensor_from_saved_profile();
-    if (err != ESP_OK)
-    {
-        if (err == ESP_ERR_NVS_NOT_FOUND)
-        {
-            err = calibrate_sensor(true);
-            if (err != ESP_OK)
-                printf("ERROR: could not calibrate sensor\n");
-        }
-        else
-        {
-            printf("ERROR: Something went wrong\n");
-        }
-    }
+    // /** Calibrate sensor or use calibration profile **/
+    // err = calibrate_sensor_from_saved_profile();
+    // if (err != ESP_OK)
+    // {
+    //     if (err == ESP_ERR_NVS_NOT_FOUND)
+    //     {
+    //         err = calibrate_sensor(true);
+    //         if (err != ESP_OK)
+    //             printf("ERROR: could not calibrate sensor\n");
+    //     }
+    //     else
+    //     {
+    //         printf("ERROR: Something went wrong\n");
+    //     }
+    // }
 
     /** Create application tasks **/
     xTaskCreate(get_vector_callback, "get_vector", 2048 * 4, NULL, 11, &xUpdateVectorTask);
