@@ -45,7 +45,8 @@ static QueueHandle_t xVectorQueue = NULL;
 
 static void get_vector_callback(void *arg)
 {
-    double vec[3];
+    double accel[3];
+    double quat[4];
     //memset(vec, 0, 3);
     //esp_err_t err = ESP_OK;
 
@@ -61,11 +62,25 @@ static void get_vector_callback(void *arg)
         // print_vector(VECTOR_EULER, vec);
         // get_vector(VECTOR_GYROSCOPE, vec);
         // print_vector(VECTOR_GYROSCOPE, vec);
-        get_vector(VECTOR_LINEARACCEL, vec);
-        print_vector(VECTOR_LINEARACCEL, vec);
+        // get_vector(VECTOR_LINEARACCEL, vec);
+        // print_vector(VECTOR_LINEARACCEL, vec);
+        // printf("LINEARACCEL,%.3f,%.3f,%.3f\n", vec[0], vec[1], vec[2]);  // heading, roll, pitch
         // get_vector(VECTOR_ACCELEROMETER, vec);
         // print_vector(VECTOR_ACCELEROMETER, vec);
-        vTaskDelay(pdMS_TO_TICKS(500));
+
+
+        // Get linear acceleration (movement only)
+        get_vector(VECTOR_LINEARACCEL, accel);
+
+        // Get sensor fusion quaternion (orientation)
+        get_quat(quat);
+
+        // Format: LINEARACCEL,x,y,z,quat_w,quat_x,quat_y,quat_z
+        printf("LINEARACCEL,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f\n",
+            accel[0], accel[1], accel[2],
+            quat[0], quat[1], quat[2], quat[3]);
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -74,47 +89,70 @@ void app_main(void)
     printf("Hello World!! \n");
 
     static const gpio_num_t OutputPin = GPIO_NUM_7;
+    static const gpio_num_t ButtonPin = GPIO_NUM_0;
 
     // Set GPIO 7 high
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << OutputPin);
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = (1ULL << OutputPin),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE
+    };
     gpio_config(&io_conf);
     gpio_set_level(OutputPin, 1);
-  
+
+    // Configure GPIO0 as input with pull-up
+    gpio_config_t btn_conf = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = (1ULL << ButtonPin),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE
+    };
+    gpio_config(&btn_conf);
+
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    /** Create Queue Handles **/
+    // Create vector queue
     xVectorQueue = xQueueCreate(10, (sizeof(double) * 3));
 
     esp_err_t err = bno055_begin_i2c(OPERATION_MODE_IMUPLUS);
-    if (err != ESP_OK)
-    {
-        printf("ERROR: could not initiate 12c comunication\n");
+    if (err != ESP_OK) {
+        printf("ERROR: could not initiate i2c communication\n");
         return;
     }
 
-    //calibrate_sensor(true);
-
-    // /** Calibrate sensor or use calibration profile **/
-    // err = calibrate_sensor_from_saved_profile();
-    // if (err != ESP_OK)
-    // {
-    //     if (err == ESP_ERR_NVS_NOT_FOUND)
-    //     {
-    //         err = calibrate_sensor(true);
-    //         if (err != ESP_OK)
-    //             printf("ERROR: could not calibrate sensor\n");
-    //     }
-    //     else
-    //     {
-    //         printf("ERROR: Something went wrong\n");
-    //     }
-    // }
-
-    /** Create application tasks **/
+    // Start the sensor reading task
     xTaskCreate(get_vector_callback, "get_vector", 2048 * 4, NULL, 11, &xUpdateVectorTask);
+
+    // Main loop: check for button press
+    while (1) {
+        if (gpio_get_level(ButtonPin) == 0) {
+            printf("Button pressed: pausing and calibrating...\n");
+
+            // Pause task
+            if (xUpdateVectorTask) {
+                vTaskSuspend(xUpdateVectorTask);
+            }
+
+            // Perform calibration
+            err = calibrate_sensor(true);
+            if (err == ESP_OK) {
+                printf("Calibration complete.\n");
+            } else {
+                printf("Calibration failed with error: %d\n", err);
+            }
+
+            // Resume task
+            if (xUpdateVectorTask) {
+                vTaskResume(xUpdateVectorTask);
+            }
+
+            // Simple debounce / prevent repeated trigger
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50)); // Polling interval
+    }
 }
