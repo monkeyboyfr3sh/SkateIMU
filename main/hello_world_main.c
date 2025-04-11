@@ -33,6 +33,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "esp_timer.h"
 
 #include "esp_bno055.h"
 
@@ -76,7 +77,9 @@ static void get_vector_callback(void *arg)
         get_quat(quat);
 
         // Format: LINEARACCEL,x,y,z,quat_w,quat_x,quat_y,quat_z
-        printf("LINEARACCEL,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f\n",
+        int64_t timestamp = esp_timer_get_time();  // µs since boot
+        printf("DATA,%lld,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f\n",
+            timestamp,
             accel[0], accel[1], accel[2],
             quat[0], quat[1], quat[2], quat[3]);
 

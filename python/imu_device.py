@@ -6,23 +6,18 @@ from scipy.spatial.transform import Rotation as R
 
 # === Base Device Class ===
 class IMUDevice(ABC):
-    """
-    Abstract base class for IMU devices.
-    """
-
     @abstractmethod
     def sample(self):
         """
-        Reads and returns a quaternion [w, x, y, z] from the device.
-        Should return None if data is not valid or not available.
+        Reads and returns (timestamp, linear_accel_world, orientation_quat)
+        - timestamp: float (seconds)
+        - linear_accel_world: np.array([ax, ay, az]) in world frame
+        - orientation_quat: [w, x, y, z]
         """
         pass
 
     @abstractmethod
     def close(self):
-        """
-        Closes any underlying connections to the device.
-        """
         pass
 
 
@@ -33,28 +28,32 @@ class UARTIMUDevice(IMUDevice):
 
     def sample(self):
         """
-        Reads one line from the UART, parses a quaternion if valid.
-        Returns [w, x, y, z] or None if invalid.
+        Parses a line like: DATA,<timestamp>,<ax>,<ay>,<az>,<qw>,<qx>,<qy>,<qz>
+        Rotates acceleration to world frame using quaternion.
+        Returns: (timestamp_seconds, accel_world, [w, x, y, z])
         """
         while True:
             try:
                 line = self.ser.readline().decode(errors='ignore').strip()
-                if not line.startswith("LINEARACCEL"):
+                if not line.startswith("DATA"):
                     continue
 
                 parts = line.split(',')
-                if len(parts) != 8:
+                if len(parts) != 9:
                     print(f"Malformed line: {line}")
                     return None
 
-                _, _, _, _, qw, qx, qy, qz = parts
+                _, timestamp_str, ax, ay, az, qw, qx, qy, qz = parts
+                timestamp = int(timestamp_str) / 1e6  # convert µs to seconds
+
+                accel = np.array([float(ax), float(ay), float(az)])
                 quat = [float(qw), float(qx), float(qy), float(qz)]
 
-                if np.isclose(np.linalg.norm(quat), 0.0):
-                    print("Invalid quaternion, skipping")
-                    return None
+                # Convert quaternion to rotation object
+                rotation = R.from_quat([qx, qy, qz, qw])  # scipy expects [x, y, z, w]
+                accel_world = rotation.apply(accel)
 
-                return quat
+                return timestamp, accel_world, quat
 
             except Exception as e:
                 print(f"UART Read Error: {e}")

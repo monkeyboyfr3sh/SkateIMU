@@ -14,7 +14,7 @@ print("Original size (x, y, z):", mesh.extents)
 
 current_length = mesh.extents[0]  # Assuming X is length
 desired_length = 0.81
-scale_factor = desired_length / current_length  # ~0.5714
+scale_factor = desired_length / current_length
 print(f"Scale factor = {scale_factor}")
 
 mesh.apply_scale(scale_factor)
@@ -22,7 +22,7 @@ print("After scaling (x, y, z):", mesh.extents)
 
 # Center the mesh for clean rotation
 mesh.vertices -= mesh.centroid
-vertices = mesh.vertices
+vertices = mesh.vertices.copy()
 faces = mesh.faces
 
 # Build mesh data for pyqtgraph
@@ -49,21 +49,45 @@ view.addItem(mesh_item)
 # Setup IMU device
 device = UARTIMUDevice(port='COM7', baudrate=115200)
 
-def update():
-    quat = device.sample()
+# Integration state
+prev_time = None
+velocity = np.zeros(3)
+position = np.zeros(3)
 
-    if quat is None:
+def update():
+    global prev_time, velocity, position
+
+    result = device.sample()
+    if result is None:
         return
 
-    # Convert to rotation matrix (order: [x, y, z, w])
-    rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
+    timestamp, accel_world, quat = result
 
-    # Apply rotation
-    rotated = (rot @ vertices.T).T
-    mesh_data.setVertexes(rotated)
+    if prev_time is None:
+        prev_time = timestamp
+        return
+
+    dt = timestamp - prev_time
+    prev_time = timestamp
+
+    # Integrate acceleration -> velocity
+    velocity += accel_world * dt
+
+    # Integrate velocity -> position
+    position += velocity * dt
+
+    # Convert quaternion to rotation matrix
+    rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
+    rotated_vertices = (rot @ vertices.T).T
+
+    # Apply only rotation to mesh
+    mesh_data.setVertexes(rotated_vertices)
     mesh_item.meshDataChanged()
 
-# Timer to refresh every 50ms
+    # Center the camera on the current position
+    view.opts['center'] = pg.Vector(position[0], position[1], position[2])
+    
+# Timer to refresh
 timer = QtCore.QTimer()
 timer.timeout.connect(update)
 timer.start(10)
