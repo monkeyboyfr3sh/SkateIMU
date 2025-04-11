@@ -1,0 +1,22 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.espIdfPathWin": "C:\\Users\\monke\\esp\\v5.4\\esp-idf",
+    "idf.toolsPathWin": "C:\\Users\\monke\\.espressif",
+    "idf.pythonInstallPath": "C:\\Users\\monke\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+    "idf.portWin": "COM7",
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.flashType": "UART",
+    "files.associations": {
+        "string": "cpp",
+        "esp_spi_flash.h": "c",
+        "spi_flash_mmap.h": "c",
+        "compare": "c",
+        "cstdint": "c",
+        "esp_bno055.h": "c"
+    }
+}
