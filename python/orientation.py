@@ -34,7 +34,7 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.resize(1400, 800)
 
         # Load and scale mesh
-        mesh = trimesh.load('C:/Users/monke/Documents/GitHub/hello_world/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
+        mesh = trimesh.load('C:/Users/monke/Documents/GitHub/SkateIMU/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
         mesh.apply_scale(0.81 / mesh.extents[0])
         mesh.vertices -= mesh.centroid
         self.vertices = mesh.vertices.copy()
