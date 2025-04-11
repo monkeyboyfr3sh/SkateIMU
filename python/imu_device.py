@@ -35,7 +35,7 @@ class UARTIMUDevice(IMUDevice):
         while True:
             try:
                 line = self.ser.readline().decode(errors='ignore').strip()
-                if not line.startswith("DATA"):
+                if "DATA," not in line:
                     continue
 
                 parts = line.split(',')

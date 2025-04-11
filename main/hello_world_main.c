@@ -34,8 +34,11 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 
 #include "esp_bno055.h"
+
+static const char *TAG = "MAIN";
 
 /** Task Handles **/
 static TaskHandle_t xUpdateVectorTask = NULL;
@@ -48,6 +51,7 @@ static void get_vector_callback(void *arg)
 {
     double accel[3];
     double quat[4];
+    int64_t timestamp;
     //memset(vec, 0, 3);
     //esp_err_t err = ESP_OK;
 
@@ -78,7 +82,7 @@ static void get_vector_callback(void *arg)
 
         // Format: LINEARACCEL,x,y,z,quat_w,quat_x,quat_y,quat_z
         int64_t timestamp = esp_timer_get_time();  // µs since boot
-        printf("DATA,%lld,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f\n",
+        ESP_LOGI(TAG,"DATA,%lld,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
             timestamp,
             accel[0], accel[1], accel[2],
             quat[0], quat[1], quat[2], quat[3]);
