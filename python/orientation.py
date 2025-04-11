@@ -57,6 +57,9 @@ class IMUMeshViewer(QtWidgets.QWidget):
         # IMU Device
         self.device = UARTIMUDevice(port='COM7', baudrate=115200)
 
+        # Configurable deadband
+        self.accel_deadband = 2.0  # changeable threshold
+
         # State
         self.prev_time = None
         self.velocity = np.zeros(3)
@@ -71,12 +74,17 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.timer.timeout.connect(self.update_data)
         self.timer.start(33)
 
+    def apply_deadband(self, accel):
+        filtered = np.where(np.abs(accel) < self.accel_deadband, 0, accel)
+        return filtered
+
     def update_data(self):
         result = self.device.sample()
         if result is None:
             return
 
         timestamp, accel_world, quat = result
+        accel_world = self.apply_deadband(accel_world)
 
         if self.prev_time is None:
             self.prev_time = timestamp
