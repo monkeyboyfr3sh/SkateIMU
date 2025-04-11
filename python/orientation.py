@@ -59,6 +59,9 @@ class IMUMeshViewer(QtWidgets.QWidget):
 
         # Configurable deadband
         self.accel_deadband = 2.0  # changeable threshold
+        
+        # Velocity decay factor (closer to 1 = slower decay, e.g. 0.98)
+        self.velocity_decay = 0.98
 
         # State
         self.prev_time = None
@@ -95,6 +98,11 @@ class IMUMeshViewer(QtWidgets.QWidget):
 
         # Integrate acceleration -> velocity -> position
         self.velocity += accel_world * dt
+
+        # Apply exponential decay
+        self.velocity *= self.velocity_decay
+
+        # Integrate velocity to position
         self.position += self.velocity * dt
 
         # Rotate mesh
