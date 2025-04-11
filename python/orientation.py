@@ -74,9 +74,32 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.accel_data = [[] for _ in range(3)]
         self.velocity_data = [[] for _ in range(3)]
         self.position_data = [[] for _ in range(3)]
-        self.max_points = 300
-        self.accel_deadband = 0.6
-        self.velocity_decay = 0.60
+        self.max_points = 150
+        self.accel_deadband = 0.05
+        self.velocity_decay = 0.2
+        # Deadband passthrough window (keep feeding accel after threshold exceeded)
+        self._last_accel_active_time = QtCore.QTime.currentTime().msecsSinceStartOfDay() / 1000.0
+        self._deadband_release_window = 0.3  # seconds
+
+        # --- Add Reset Button
+        self.reset_button = QtWidgets.QPushButton("Reset Position")
+        self.reset_button.clicked.connect(self.reset_position)
+        right_layout.addWidget(self.reset_button)
+
+    def reset_position(self):
+        self.position = np.zeros(3)
+        self.velocity = np.zeros(3)
+
+        for data in (self.position_data, self.velocity_data):
+            for i in range(3):
+                data[i].clear()
+        
+        for i in range(3):
+            self.position_data[i].append(0.0)
+            self.velocity_data[i].append(0.0)
+
+        self.prev_time = None
+        print("Position and velocity reset.")
 
     def init_plot(self, layout):
         # Quaternion
@@ -112,7 +135,15 @@ class IMUMeshViewer(QtWidgets.QWidget):
         layout.addWidget(self.position_plot)
 
     def apply_deadband(self, accel):
-        return np.where(np.abs(accel) < self.accel_deadband, 0, accel)
+        now = QtCore.QTime.currentTime().msecsSinceStartOfDay() / 1000.0  # seconds
+        if np.any(np.abs(accel) > self.accel_deadband):
+            self._last_accel_active_time = now
+
+        # Allow passthrough if recently active
+        if now - self._last_accel_active_time < self._deadband_release_window:
+            return accel
+        else:
+            return np.zeros_like(accel)
 
     def handle_sample(self, timestamp, accel_world, quat):
         accel_world = self.apply_deadband(accel_world)
@@ -144,17 +175,26 @@ class IMUMeshViewer(QtWidgets.QWidget):
             self.position_data[i].append(self.position[i])
 
         if len(self.timestamps) > self.max_points:
-            self.timestamps = self.timestamps[-self.max_points:]
-            for d in (self.quat_data, self.accel_data, self.velocity_data, self.position_data):
-                for i in range(len(d)):
-                    d[i] = d[i][-self.max_points:]
+            trim = -self.max_points
+            self.timestamps = self.timestamps[trim:]
+            self.quat_data = [d[trim:] for d in self.quat_data]
+            self.accel_data = [d[trim:] for d in self.accel_data]
+            self.velocity_data = [d[trim:] for d in self.velocity_data]
+            self.position_data = [d[trim:] for d in self.position_data]
+
+        min_len = min(len(self.timestamps),
+                    *[len(d) for d in self.velocity_data],
+                    *[len(d) for d in self.position_data],
+                    *[len(d) for d in self.accel_data])
+
+        timestamps = self.timestamps[-min_len:]
 
         for i in range(4):
-            self.quat_curves[i].setData(self.timestamps, self.quat_data[i])
+            self.quat_curves[i].setData(timestamps, self.quat_data[i][-min_len:])
         for i in range(3):
-            self.accel_curves[i].setData(self.timestamps, self.accel_data[i])
-            self.velocity_curves[i].setData(self.timestamps, self.velocity_data[i])
-            self.position_curves[i].setData(self.timestamps, self.position_data[i])
+            self.accel_curves[i].setData(timestamps, self.accel_data[i][-min_len:])
+            self.velocity_curves[i].setData(timestamps, self.velocity_data[i][-min_len:])
+            self.position_curves[i].setData(timestamps, self.position_data[i][-min_len:])
 
     def closeEvent(self, event):
         self.sample_thread.stop()
