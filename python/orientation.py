@@ -9,7 +9,18 @@ from imu_device import UARTIMUDevice
 
 # Load and prepare STL
 mesh = trimesh.load('C:/Users/monke/Documents/GitHub/hello_world/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
-mesh.apply_scale(0.01)
+
+print("Original size (x, y, z):", mesh.extents)
+
+current_length = mesh.extents[0]  # Assuming X is length
+desired_length = 0.81
+scale_factor = desired_length / current_length  # ~0.5714
+print(f"Scale factor = {scale_factor}")
+
+mesh.apply_scale(scale_factor)
+print("After scaling (x, y, z):", mesh.extents)
+
+# Center the mesh for clean rotation
 mesh.vertices -= mesh.centroid
 vertices = mesh.vertices
 faces = mesh.faces
