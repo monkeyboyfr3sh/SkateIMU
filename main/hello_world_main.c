@@ -136,17 +136,34 @@ void app_main(void)
     // Main loop: check for button press
     while (1) {
         if (gpio_get_level(ButtonPin) == 0) {
-            printf("Button pressed: pausing and calibrating...\n");
+            // Button press detected
+            int64_t press_start = esp_timer_get_time(); // microseconds
+
+            // Wait until button is released
+            while (gpio_get_level(ButtonPin) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+
+            int64_t press_duration = esp_timer_get_time() - press_start; // microseconds
+
+            printf("Button press duration: %lld ms\n", press_duration / 1000);
 
             // Pause task
             if (xUpdateVectorTask) {
                 vTaskSuspend(xUpdateVectorTask);
             }
 
-            // Perform calibration
-            err = calibrate_sensor(true);
+            // Decide calibration type based on press duration
+            if (press_duration > 1500000) { // 1.5 seconds threshold for long press
+                printf("Long press detected. Calibrating sensor from scratch...\n");
+                err = calibrate_sensor(true);
+            } else {
+                printf("Short press detected. Loading calibration profile...\n");
+                err = calibrate_sensor_from_saved_profile();
+            }
+
             if (err == ESP_OK) {
-                printf("Calibration complete.\n");
+                printf("Calibration successful.\n");
             } else {
                 printf("Calibration failed with error: %d\n", err);
             }
@@ -156,7 +173,7 @@ void app_main(void)
                 vTaskResume(xUpdateVectorTask);
             }
 
-            // Simple debounce / prevent repeated trigger
+            // Debounce delay
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
 
