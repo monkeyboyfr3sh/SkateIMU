@@ -5,7 +5,9 @@ from scipy.spatial.transform import Rotation as R
 from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+
 from imu_device import UARTIMUDevice
+from imu_data_processor import IMUDataProcessor
 
 class IMUSampleThread(QtCore.QThread):
     new_sample = QtCore.pyqtSignal(float, np.ndarray, list)  # timestamp, accel_world, quat
@@ -21,7 +23,6 @@ class IMUSampleThread(QtCore.QThread):
             if result:
                 timestamp, accel_world, quat = result
                 self.new_sample.emit(timestamp, accel_world, quat)
-            self.msleep(10)
 
     def stop(self):
         self.running = False
@@ -64,6 +65,7 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.sample_thread = IMUSampleThread(self.device)
         self.sample_thread.new_sample.connect(self.handle_sample)
         self.sample_thread.start()
+        self.processor = IMUDataProcessor()
 
         # State
         self.prev_time = None
@@ -75,11 +77,6 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.velocity_data = [[] for _ in range(3)]
         self.position_data = [[] for _ in range(3)]
         self.max_points = 150
-        self.accel_deadband = 0.05
-        self.velocity_decay = 0.2
-        # Deadband passthrough window (keep feeding accel after threshold exceeded)
-        self._last_accel_active_time = QtCore.QTime.currentTime().msecsSinceStartOfDay() / 1000.0
-        self._deadband_release_window = 0.3  # seconds
 
         # --- Add Reset Button
         self.reset_button = QtWidgets.QPushButton("Reset Position")
@@ -87,17 +84,13 @@ class IMUMeshViewer(QtWidgets.QWidget):
         right_layout.addWidget(self.reset_button)
 
     def reset_position(self):
-        self.position = np.zeros(3)
-        self.velocity = np.zeros(3)
-
+        self.processor.reset()
         for data in (self.position_data, self.velocity_data):
             for i in range(3):
                 data[i].clear()
-        
         for i in range(3):
             self.position_data[i].append(0.0)
             self.velocity_data[i].append(0.0)
-
         self.prev_time = None
         print("Position and velocity reset.")
 
@@ -146,18 +139,20 @@ class IMUMeshViewer(QtWidgets.QWidget):
             return np.zeros_like(accel)
 
     def handle_sample(self, timestamp, accel_world, quat):
-        accel_world = self.apply_deadband(accel_world)
+        accel_world, velocity, position = self.processor.process_sample(timestamp, accel_world)
 
-        if self.prev_time is None:
-            self.prev_time = timestamp
-            return
+        rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
+        transformed_vertices = (rot @ self.vertices.T).T + position
+        self.mesh_data.setVertexes(transformed_vertices)
+        self.mesh_item.meshDataChanged()
 
-        dt = timestamp - self.prev_time
-        self.prev_time = timestamp
-
-        self.velocity += accel_world * dt
-        self.velocity *= self.velocity_decay
-        self.position += self.velocity * dt
+        self.timestamps.append(timestamp)
+        for i in range(4):
+            self.quat_data[i].append(quat[i])
+        for i in range(3):
+            self.accel_data[i].append(accel_world[i])
+            self.velocity_data[i].append(velocity[i])
+            self.position_data[i].append(position[i])
 
         # Transform mesh
         rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
