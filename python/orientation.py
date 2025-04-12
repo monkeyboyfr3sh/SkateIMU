@@ -85,9 +85,9 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.sample_thread.new_sample.connect(self.handle_sample)
         self.sample_thread.start()
         self.processor = IMUDataProcessor(
-            accel_deadband = 0.0,
-            velocity_deadband = 0.0,
-            velocity_decay = 0.98,
+            accel_deadband = 0.2,
+            velocity_deadband = 0.05,
+            velocity_decay = 0.90,
         )
 
         # State
@@ -174,7 +174,7 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.mesh_data.setVertexes(transformed_vertices)
         self.mesh_item.meshDataChanged()
 
-        # 👇 Make the camera follow the model
+        # Make the camera follow the model
         self.view.opts['center'] = QVector3D(*position)
 
         # Append new data to logs

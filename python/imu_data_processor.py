@@ -18,8 +18,6 @@ class IMUDataProcessor:
     def apply_deadband(self, vec, threshold):
         output = np.zeros_like(vec)
         for i in range(3):
-            if i == 0 or i == 1:
-                continue
             if abs(vec[i]) > threshold:
                 output[i] = vec[i]
         return output
