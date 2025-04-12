@@ -30,34 +30,35 @@ class UARTIMUDevice(IMUDevice):
         """
         Parses a line like: DATA,<timestamp>,<ax>,<ay>,<az>,<qw>,<qx>,<qy>,<qz>
         Rotates acceleration to world frame using quaternion.
-        Returns: (timestamp_seconds, accel_world, [w, x, y, z])
+        Returns: (timestamp_seconds, accel_world, [w, x, y, z], raw_line)
+                or (None, None, None, raw_line) if parsing fails
         """
-        while True:
-            try:
-                line = self.ser.readline().decode(errors='ignore').strip()
-                if "DATA," not in line:
-                    continue
+        try:
+            line = self.ser.readline().decode(errors='ignore').strip()
+            if not line:
+                return None, None, None, line
 
-                parts = line.split(',')
-                if len(parts) != 9:
-                    print(f"Malformed line: {line}")
-                    return None
+            if "DATA," not in line:
+                return None, None, None, line
 
-                _, timestamp_str, ax, ay, az, qw, qx, qy, qz = parts
-                timestamp = int(timestamp_str) / 1e6  # convert µs to seconds
+            parts = line.split(',')
+            if len(parts) != 9:
+                return None, None, None, line
 
-                accel = np.array([float(ax), float(ay), float(az)])
-                quat = [float(qw), float(qx), float(qy), float(qz)]
+            _, timestamp_str, ax, ay, az, qw, qx, qy, qz = parts
+            timestamp = int(timestamp_str) / 1e6  # convert µs to seconds
 
-                # Convert quaternion to rotation object
-                rotation = R.from_quat([qx, qy, qz, qw])  # scipy expects [x, y, z, w]
-                accel_world = rotation.apply(accel)
+            accel = np.array([float(ax), float(ay), float(az)])
+            quat = [float(qw), float(qx), float(qy), float(qz)]
 
-                return timestamp, accel_world, quat
+            # Convert quaternion to rotation object
+            rotation = R.from_quat([qx, qy, qz, qw])  # scipy expects [x, y, z, w]
+            accel_world = rotation.apply(accel)
 
-            except Exception as e:
-                print(f"UART Read Error: {e}")
-                return None
+            return timestamp, accel_world, quat, line
+
+        except Exception as e:
+            return None, None, None, f"ERROR: {e}"
 
     def close(self):
         self.ser.close()

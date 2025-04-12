@@ -2,7 +2,8 @@ import sys
 import numpy as np
 import trimesh
 from scipy.spatial.transform import Rotation as R
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5.QtGui import QVector3D
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
@@ -10,7 +11,7 @@ from imu_device import UARTIMUDevice
 from imu_data_processor import IMUDataProcessor
 
 class IMUSampleThread(QtCore.QThread):
-    new_sample = QtCore.pyqtSignal(float, np.ndarray, list)  # timestamp, accel_world, quat
+    new_sample = QtCore.pyqtSignal(float, np.ndarray, list, str)
 
     def __init__(self, device):
         super().__init__()
@@ -19,10 +20,17 @@ class IMUSampleThread(QtCore.QThread):
 
     def run(self):
         while self.running:
-            result = self.device.sample()
-            if result:
-                timestamp, accel_world, quat = result
-                self.new_sample.emit(timestamp, accel_world, quat)
+            timestamp, accel_world, quat, raw_line = self.device.sample()
+
+            # Always emit a line, even if the parsed data is invalid
+            if raw_line:
+                # Use dummy values for signal consistency
+                if timestamp is None:
+                    timestamp = 0.0
+                    accel_world = np.zeros(3)
+                    quat = [1.0, 0.0, 0.0, 0.0]
+                self.new_sample.emit(timestamp, accel_world, quat, raw_line)
+
             self.msleep(10)
 
     def stop(self):
@@ -55,6 +63,16 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.view.addItem(gl.GLGridItem())
         self.mesh_item = gl.GLMeshItem(meshdata=self.mesh_data, smooth=False, drawFaces=True, drawEdges=True, edgeColor=(0, 0, 0, 1), color=(0.6, 0.8, 1, 1))
         self.view.addItem(self.mesh_item)
+        # Set initial camera distance and center
+        model_radius = np.linalg.norm(self.vertices, axis=1).max()
+        initial_distance = model_radius * 3  # zoom factor, adjust as needed
+
+        self.view.setCameraPosition(
+            pos=QtGui.QVector3D(0, 0, initial_distance),
+            distance=initial_distance,
+            elevation=20,
+            azimuth=45
+        )
         left_layout.addWidget(self.view)
 
         # Plot widgets
@@ -67,8 +85,8 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.sample_thread.new_sample.connect(self.handle_sample)
         self.sample_thread.start()
         self.processor = IMUDataProcessor(
-            accel_deadband = 0.2,
-            velocity_deadband = 0.2,
+            accel_deadband = 0.0,
+            velocity_deadband = 0.0,
             velocity_decay = 0.98,
         )
 
@@ -87,6 +105,11 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.reset_button = QtWidgets.QPushButton("Reset Position")
         self.reset_button.clicked.connect(self.reset_position)
         right_layout.addWidget(self.reset_button)
+
+        self.terminal = QtWidgets.QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setFixedHeight(150)
+        right_layout.addWidget(self.terminal)
 
     def reset_position(self):
         self.processor.reset()
@@ -132,7 +155,16 @@ class IMUMeshViewer(QtWidgets.QWidget):
                                 for c, label in zip(['r', 'g', 'b'], ['px', 'py', 'pz'])]
         layout.addWidget(self.position_plot)
 
-    def handle_sample(self, timestamp, accel_world, quat):
+    def handle_sample(self, timestamp, accel_world, quat, raw_line):
+
+        # Always show the terminal line
+        self.terminal.append(raw_line)
+        self.terminal.verticalScrollBar().setValue(self.terminal.verticalScrollBar().maximum())
+    
+        # Only process if accel/quat data is valid
+        if accel_world is None or quat is None:
+            return
+
         # Process the sample using the processor
         accel_world, velocity, position = self.processor.process_sample(timestamp, accel_world)
 
@@ -141,6 +173,9 @@ class IMUMeshViewer(QtWidgets.QWidget):
         transformed_vertices = (rot @ self.vertices.T).T + position
         self.mesh_data.setVertexes(transformed_vertices)
         self.mesh_item.meshDataChanged()
+
+        # 👇 Make the camera follow the model
+        self.view.opts['center'] = QVector3D(*position)
 
         # Append new data to logs
         self.timestamps.append(timestamp)
