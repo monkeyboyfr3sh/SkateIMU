@@ -23,6 +23,7 @@ class IMUSampleThread(QtCore.QThread):
             if result:
                 timestamp, accel_world, quat = result
                 self.new_sample.emit(timestamp, accel_world, quat)
+            self.msleep(10)
 
     def stop(self):
         self.running = False
@@ -36,7 +37,7 @@ class IMUMeshViewer(QtWidgets.QWidget):
 
         # Load and scale mesh
         mesh = trimesh.load('C:/Users/monke/Documents/GitHub/SkateIMU/python/assets/Skateboard - 172002/files/Skateboard_WHOLE.stl')
-        mesh.apply_scale(0.81 / mesh.extents[0])
+        mesh.apply_scale(0.2757 / mesh.extents[0])
         mesh.vertices -= mesh.centroid
         self.vertices = mesh.vertices.copy()
         faces = mesh.faces
@@ -65,7 +66,11 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.sample_thread = IMUSampleThread(self.device)
         self.sample_thread.new_sample.connect(self.handle_sample)
         self.sample_thread.start()
-        self.processor = IMUDataProcessor()
+        self.processor = IMUDataProcessor(
+            accel_deadband = 0.2,
+            velocity_deadband = 0.2,
+            velocity_decay = 0.98,
+        )
 
         # State
         self.prev_time = None
@@ -127,25 +132,17 @@ class IMUMeshViewer(QtWidgets.QWidget):
                                 for c, label in zip(['r', 'g', 'b'], ['px', 'py', 'pz'])]
         layout.addWidget(self.position_plot)
 
-    def apply_deadband(self, accel):
-        now = QtCore.QTime.currentTime().msecsSinceStartOfDay() / 1000.0  # seconds
-        if np.any(np.abs(accel) > self.accel_deadband):
-            self._last_accel_active_time = now
-
-        # Allow passthrough if recently active
-        if now - self._last_accel_active_time < self._deadband_release_window:
-            return accel
-        else:
-            return np.zeros_like(accel)
-
     def handle_sample(self, timestamp, accel_world, quat):
+        # Process the sample using the processor
         accel_world, velocity, position = self.processor.process_sample(timestamp, accel_world)
 
+        # Transform mesh using the position returned from processor
         rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
         transformed_vertices = (rot @ self.vertices.T).T + position
         self.mesh_data.setVertexes(transformed_vertices)
         self.mesh_item.meshDataChanged()
 
+        # Append new data to logs
         self.timestamps.append(timestamp)
         for i in range(4):
             self.quat_data[i].append(quat[i])
@@ -154,21 +151,7 @@ class IMUMeshViewer(QtWidgets.QWidget):
             self.velocity_data[i].append(velocity[i])
             self.position_data[i].append(position[i])
 
-        # Transform mesh
-        rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
-        transformed_vertices = (rot @ self.vertices.T).T + self.position
-        self.mesh_data.setVertexes(transformed_vertices)
-        self.mesh_item.meshDataChanged()
-
-        # Update plots
-        self.timestamps.append(timestamp)
-        for i in range(4):
-            self.quat_data[i].append(quat[i])
-        for i in range(3):
-            self.accel_data[i].append(accel_world[i])
-            self.velocity_data[i].append(self.velocity[i])
-            self.position_data[i].append(self.position[i])
-
+        # Trim data arrays if too long
         if len(self.timestamps) > self.max_points:
             trim = -self.max_points
             self.timestamps = self.timestamps[trim:]
@@ -177,11 +160,11 @@ class IMUMeshViewer(QtWidgets.QWidget):
             self.velocity_data = [d[trim:] for d in self.velocity_data]
             self.position_data = [d[trim:] for d in self.position_data]
 
+        # Update plots
         min_len = min(len(self.timestamps),
                     *[len(d) for d in self.velocity_data],
                     *[len(d) for d in self.position_data],
                     *[len(d) for d in self.accel_data])
-
         timestamps = self.timestamps[-min_len:]
 
         for i in range(4):
