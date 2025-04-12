@@ -154,13 +154,12 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.position_curves = [self.position_plot.plot(pen=pg.mkPen(c, width=2), name=label)
                                 for c, label in zip(['r', 'g', 'b'], ['px', 'py', 'pz'])]
         layout.addWidget(self.position_plot)
-
+        
     def handle_sample(self, timestamp, accel_world, quat, raw_line):
-
         # Always show the terminal line
         self.terminal.append(raw_line)
         self.terminal.verticalScrollBar().setValue(self.terminal.verticalScrollBar().maximum())
-    
+
         # Only process if accel/quat data is valid
         if accel_world is None or quat is None:
             return
@@ -168,14 +167,24 @@ class IMUMeshViewer(QtWidgets.QWidget):
         # Process the sample using the processor
         accel_world, velocity, position = self.processor.process_sample(timestamp, accel_world)
 
-        # Transform mesh using the position returned from processor
+        # Transform mesh with rotation
         rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
-        transformed_vertices = (rot @ self.vertices.T).T + position
+        rotated_vertices = (rot @ self.vertices.T).T
+
+        # Clamp Z translation so the bottom of the mesh stays at or above Z=0
+        mesh_bottom_z = rotated_vertices[:, 2].min()
+        adjusted_z = max(position[2], -mesh_bottom_z)
+        adjusted_position = np.array([position[0], position[1], adjusted_z])
+
+        # Apply the adjusted translation
+        transformed_vertices = rotated_vertices + adjusted_position
+
+        # Update the mesh
         self.mesh_data.setVertexes(transformed_vertices)
         self.mesh_item.meshDataChanged()
 
-        # Make the camera follow the model
-        self.view.opts['center'] = QVector3D(*position)
+        # Make the camera follow the clamped model position
+        self.view.opts['center'] = QVector3D(*adjusted_position)
 
         # Append new data to logs
         self.timestamps.append(timestamp)
