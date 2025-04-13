@@ -57,6 +57,8 @@ static void apply_deadband(double *vec, double threshold) {
 
 static void get_vector_callback(void *arg)
 {
+    double accel_raw[3];
+    double gravity[3];
     double accel[3];
     double quat[4];
 
@@ -65,20 +67,23 @@ static void get_vector_callback(void *arg)
     int64_t prev_time = 0;
     int64_t last_print_time = 0;
 
-    // === Configurable rate (in ms) ===
-    const int print_interval_ms = 50;  // Change this value as needed
+    const int print_interval_ms = 50;
     const double accel_deadband = 0.2;
     const double velocity_deadband = 0.05;
     const double velocity_decay = 0.80;
 
     while (1)
     {
-        get_vector(VECTOR_LINEARACCEL, accel);
+        get_vector(VECTOR_ACCELEROMETER, accel_raw);
+        get_vector(VECTOR_GRAVITY, gravity);
         get_quat(quat);
-        int64_t timestamp = esp_timer_get_time(); // µs since boot
+        int64_t timestamp = esp_timer_get_time();
 
-        double accel_filtered[3] = { accel[0], accel[1], accel[2] };
-        apply_deadband(accel_filtered, accel_deadband);
+        for (int i = 0; i < 3; ++i) {
+            accel[i] = accel_raw[i] - gravity[i];
+        }
+
+        apply_deadband(accel, accel_deadband);
 
         if (prev_time == 0) {
             prev_time = timestamp;
@@ -86,12 +91,11 @@ static void get_vector_callback(void *arg)
             continue;
         }
 
-        double dt = (timestamp - prev_time) / 1000000.0; // µs to seconds
+        double dt = (timestamp - prev_time) / 1000000.0;
         prev_time = timestamp;
 
-        // Integrate accel -> velocity
         for (int i = 0; i < 3; ++i) {
-            velocity[i] += accel_filtered[i] * dt;
+            velocity[i] += accel[i] * dt;
             velocity[i] *= velocity_decay;
         }
 
@@ -102,19 +106,16 @@ static void get_vector_callback(void *arg)
             position[i] += velocity_filtered[i] * dt;
         }
 
-        // === Only print every print_interval_ms ===
         if ((timestamp - last_print_time) >= (print_interval_ms * 1000)) {
             ESP_LOGI(TAG, "PROC,%lld,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
                 timestamp,
-                accel_filtered[0], accel_filtered[1], accel_filtered[2],
+                accel[0], accel[1], accel[2],
                 velocity_filtered[0], velocity_filtered[1], velocity_filtered[2],
                 position[0], position[1], position[2],
                 quat[0], quat[1], quat[2], quat[3]);
 
             last_print_time = timestamp;
         }
-
-        // No delay here: run as fast as the processor allows
     }
 }
 
