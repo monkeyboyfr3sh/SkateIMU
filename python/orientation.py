@@ -11,7 +11,7 @@ from imu_device import UARTIMUDevice
 from imu_data_processor import IMUDataProcessor
 
 class IMUSampleThread(QtCore.QThread):
-    new_sample = QtCore.pyqtSignal(float, np.ndarray, list, str)
+    new_sample = QtCore.pyqtSignal(float, np.ndarray, np.ndarray, np.ndarray, list, str)
 
     def __init__(self, device):
         super().__init__()
@@ -20,16 +20,16 @@ class IMUSampleThread(QtCore.QThread):
 
     def run(self):
         while self.running:
-            timestamp, accel_world, quat, raw_line = self.device.sample()
+            timestamp, accel, velocity, position, quat, raw_line = self.device.sample()
 
-            # Always emit a line, even if the parsed data is invalid
             if raw_line:
-                # Use dummy values for signal consistency
                 if timestamp is None:
                     timestamp = 0.0
-                    accel_world = np.zeros(3)
+                    accel = np.zeros(3)
+                    velocity = np.zeros(3)
+                    position = np.zeros(3)
                     quat = [1.0, 0.0, 0.0, 0.0]
-                self.new_sample.emit(timestamp, accel_world, quat, raw_line)
+                self.new_sample.emit(timestamp, accel, velocity, position, quat, raw_line)
 
             self.msleep(10)
 
@@ -84,11 +84,11 @@ class IMUMeshViewer(QtWidgets.QWidget):
         self.sample_thread = IMUSampleThread(self.device)
         self.sample_thread.new_sample.connect(self.handle_sample)
         self.sample_thread.start()
-        self.processor = IMUDataProcessor(
-            accel_deadband = 0.2,
-            velocity_deadband = 0.05,
-            velocity_decay = 0.90,
-        )
+        # self.processor = IMUDataProcessor(
+        #     accel_deadband = 0.2,
+        #     velocity_deadband = 0.05,
+        #     velocity_decay = 0.90,
+        # )
 
         # State
         self.prev_time = None
@@ -112,7 +112,6 @@ class IMUMeshViewer(QtWidgets.QWidget):
         right_layout.addWidget(self.terminal)
 
     def reset_position(self):
-        self.processor.reset()
         for data in (self.position_data, self.velocity_data):
             for i in range(3):
                 data[i].clear()
@@ -155,47 +154,38 @@ class IMUMeshViewer(QtWidgets.QWidget):
                                 for c, label in zip(['r', 'g', 'b'], ['px', 'py', 'pz'])]
         layout.addWidget(self.position_plot)
         
-    def handle_sample(self, timestamp, accel_world, quat, raw_line):
-        # Always show the terminal line
+    def handle_sample(self, timestamp, accel, velocity, position, quat, raw_line):
+        # Terminal output
         self.terminal.append(raw_line)
         self.terminal.verticalScrollBar().setValue(self.terminal.verticalScrollBar().maximum())
 
-        # Only process if accel/quat data is valid
-        if accel_world is None or quat is None:
+        # Validate
+        if accel is None or velocity is None or position is None or quat is None:
             return
 
-        # Process the sample using the processor
-        accel_world, velocity, position = self.processor.process_sample(timestamp, accel_world)
-
-        # Transform mesh with rotation
+        # Rotate and translate mesh
         rot = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
         rotated_vertices = (rot @ self.vertices.T).T
-
-        # Clamp Z translation so the bottom of the mesh stays at or above Z=0
         mesh_bottom_z = rotated_vertices[:, 2].min()
         adjusted_z = max(position[2], -mesh_bottom_z)
         adjusted_position = np.array([position[0], position[1], adjusted_z])
-
-        # Apply the adjusted translation
         transformed_vertices = rotated_vertices + adjusted_position
 
-        # Update the mesh
+        # Apply mesh transform and update camera
         self.mesh_data.setVertexes(transformed_vertices)
         self.mesh_item.meshDataChanged()
-
-        # Make the camera follow the clamped model position
         self.view.opts['center'] = QVector3D(*adjusted_position)
 
-        # Append new data to logs
+        # Append data
         self.timestamps.append(timestamp)
         for i in range(4):
             self.quat_data[i].append(quat[i])
         for i in range(3):
-            self.accel_data[i].append(accel_world[i])
+            self.accel_data[i].append(accel[i])
             self.velocity_data[i].append(velocity[i])
             self.position_data[i].append(position[i])
 
-        # Trim data arrays if too long
+        # Trim if needed
         if len(self.timestamps) > self.max_points:
             trim = -self.max_points
             self.timestamps = self.timestamps[trim:]
@@ -210,7 +200,6 @@ class IMUMeshViewer(QtWidgets.QWidget):
                     *[len(d) for d in self.position_data],
                     *[len(d) for d in self.accel_data])
         timestamps = self.timestamps[-min_len:]
-
         for i in range(4):
             self.quat_curves[i].setData(timestamps, self.quat_data[i][-min_len:])
         for i in range(3):

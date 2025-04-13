@@ -28,37 +28,39 @@ class UARTIMUDevice(IMUDevice):
 
     def sample(self):
         """
-        Parses a line like: DATA,<timestamp>,<ax>,<ay>,<az>,<qw>,<qx>,<qy>,<qz>
-        Rotates acceleration to world frame using quaternion.
-        Returns: (timestamp_seconds, accel_world, [w, x, y, z], raw_line)
-                or (None, None, None, raw_line) if parsing fails
+        Parses lines like:
+        I (82763) MAIN: PROC,<timestamp>,<ax>,<ay>,<az>,<vx>,<vy>,<vz>,<px>,<py>,<pz>,<qw>,<qx>,<qy>,<qz>
+        Returns:
+            timestamp (sec), accel (np.array), velocity (np.array), position (np.array), quat ([w,x,y,z]), raw_line (str)
         """
         try:
             line = self.ser.readline().decode(errors='ignore').strip()
             if not line:
-                return None, None, None, line
+                return None, None, None, None, None, line
 
-            if "DATA," not in line:
-                return None, None, None, line
+            if "PROC," not in line:
+                return None, None, None, None, None, line
 
-            parts = line.split(',')
-            if len(parts) != 9:
-                return None, None, None, line
+            # Strip log prefix (e.g., "I (82763) MAIN: ")
+            proc_start = line.find("PROC,")
+            proc_line = line[proc_start:]
 
-            _, timestamp_str, ax, ay, az, qw, qx, qy, qz = parts
-            timestamp = int(timestamp_str) / 1e6  # convert µs to seconds
+            parts = proc_line.split(',')
+            if len(parts) != 15:
+                return None, None, None, None, None, line
+
+            _, ts_str, ax, ay, az, vx, vy, vz, px, py, pz, qw, qx, qy, qz = parts
+            timestamp = int(ts_str) / 1e6  # µs to seconds
 
             accel = np.array([float(ax), float(ay), float(az)])
+            velocity = np.array([float(vx), float(vy), float(vz)])
+            position = np.array([float(px), float(py), float(pz)])
             quat = [float(qw), float(qx), float(qy), float(qz)]
 
-            # Convert quaternion to rotation object
-            rotation = R.from_quat([qx, qy, qz, qw])  # scipy expects [x, y, z, w]
-            accel_world = rotation.apply(accel)
-
-            return timestamp, accel_world, quat, line
+            return timestamp, accel, velocity, position, quat, line
 
         except Exception as e:
-            return None, None, None, f"ERROR: {e}"
+            return None, None, None, None, None, f"ERROR: {e}"
 
     def close(self):
         self.ser.close()

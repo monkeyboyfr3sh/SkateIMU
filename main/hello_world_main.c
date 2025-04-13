@@ -35,7 +35,7 @@
 #include "freertos/queue.h"
 #include "esp_timer.h"
 #include "esp_log.h"
-
+#include <math.h>
 #include "esp_bno055.h"
 
 static const char *TAG = "MAIN";
@@ -47,47 +47,75 @@ static TaskHandle_t xUpdateVectorTask = NULL;
 /** Queue Handles **/
 static QueueHandle_t xVectorQueue = NULL;
 
+static void apply_deadband(double *vec, double threshold) {
+    for (int i = 0; i < 3; ++i) {
+        if (fabs(vec[i]) < threshold) {
+            vec[i] = 0.0;
+        }
+    }
+}
+
 static void get_vector_callback(void *arg)
 {
+    double accel_raw[3];
+    double gravity[3];
     double accel[3];
     double quat[4];
-    int64_t timestamp;
-    //memset(vec, 0, 3);
-    //esp_err_t err = ESP_OK;
 
-    // VECTOR_ACCELEROMETER
-    // VECTOR_MAGNETOMETER
-    // VECTOR_GYROSCOPE
-    // VECTOR_EULER
-    // VECTOR_LINEARACCEL
-    // VECTOR_GRAVITY
-    for (;;)
+    double velocity[3] = {0};
+    double position[3] = {0};
+    int64_t prev_time = 0;
+    int64_t last_print_time = 0;
+
+    const int print_interval_ms = 50;
+    const double accel_deadband = 0.2;
+    const double velocity_deadband = 0.05;
+    const double velocity_decay = 0.80;
+
+    while (1)
     {
-        // get_vector(VECTOR_EULER, vec);
-        // print_vector(VECTOR_EULER, vec);
-        // get_vector(VECTOR_GYROSCOPE, vec);
-        // print_vector(VECTOR_GYROSCOPE, vec);
-        // get_vector(VECTOR_LINEARACCEL, vec);
-        // print_vector(VECTOR_LINEARACCEL, vec);
-        // printf("LINEARACCEL,%.3f,%.3f,%.3f\n", vec[0], vec[1], vec[2]);  // heading, roll, pitch
-        // get_vector(VECTOR_ACCELEROMETER, vec);
-        // print_vector(VECTOR_ACCELEROMETER, vec);
-
-
-        // Get linear acceleration (movement only)
-        get_vector(VECTOR_LINEARACCEL, accel);
-
-        // Get sensor fusion quaternion (orientation)
+        get_vector(VECTOR_ACCELEROMETER, accel_raw);
+        get_vector(VECTOR_GRAVITY, gravity);
         get_quat(quat);
+        int64_t timestamp = esp_timer_get_time();
 
-        // Format: LINEARACCEL,x,y,z,quat_w,quat_x,quat_y,quat_z
-        int64_t timestamp = esp_timer_get_time();  // µs since boot
-        ESP_LOGI(TAG,"DATA,%lld,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
-            timestamp,
-            accel[0], accel[1], accel[2],
-            quat[0], quat[1], quat[2], quat[3]);
+        for (int i = 0; i < 3; ++i) {
+            accel[i] = accel_raw[i] - gravity[i];
+        }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        apply_deadband(accel, accel_deadband);
+
+        if (prev_time == 0) {
+            prev_time = timestamp;
+            last_print_time = timestamp;
+            continue;
+        }
+
+        double dt = (timestamp - prev_time) / 1000000.0;
+        prev_time = timestamp;
+
+        for (int i = 0; i < 3; ++i) {
+            velocity[i] += accel[i] * dt;
+            velocity[i] *= velocity_decay;
+        }
+
+        double velocity_filtered[3] = { velocity[0], velocity[1], velocity[2] };
+        apply_deadband(velocity_filtered, velocity_deadband);
+
+        for (int i = 0; i < 3; ++i) {
+            position[i] += velocity_filtered[i] * dt;
+        }
+
+        if ((timestamp - last_print_time) >= (print_interval_ms * 1000)) {
+            ESP_LOGI(TAG, "PROC,%lld,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+                timestamp,
+                accel[0], accel[1], accel[2],
+                velocity_filtered[0], velocity_filtered[1], velocity_filtered[2],
+                position[0], position[1], position[2],
+                quat[0], quat[1], quat[2], quat[3]);
+
+            last_print_time = timestamp;
+        }
     }
 }
 
